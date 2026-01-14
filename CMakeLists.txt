@@ -192,6 +192,8 @@ endif()
 if(WIN32)
     # Avoid Windows-specific video capture we don't need
     set(WITH_WIN32UI OFF CACHE BOOL "")
+    # Use dynamic runtime (/MD) to match vivid-core
+    set(BUILD_WITH_STATIC_CRT OFF CACHE BOOL "")
 endif()
 
 FetchContent_Declare(
