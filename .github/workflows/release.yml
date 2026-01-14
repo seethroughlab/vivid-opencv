@@ -1,0 +1,204 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      vivid_version:
+        description: 'Vivid version to build against (e.g., v0.1.0)'
+        required: true
+        default: 'latest'
+
+env:
+  VIVID_REPO: seethroughlab/vivid
+
+jobs:
+  build-release:
+    name: Build (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14          # Apple Silicon
+            target: darwin-arm64
+            archive_ext: tar.gz
+            vivid_archive: vivid-darwin-arm64.tar.gz
+          - os: macos-14          # Intel (cross-compile on ARM runner)
+            target: darwin-x64
+            archive_ext: tar.gz
+            vivid_archive: vivid-darwin-x64.tar.gz
+          - os: ubuntu-latest
+            target: linux-x64
+            archive_ext: tar.gz
+            vivid_archive: vivid-linux-x64.tar.gz
+          - os: windows-latest
+            target: win32-x64
+            archive_ext: zip
+            vivid_archive: vivid-win32-x64.zip
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Get vivid version
+        id: vivid_version
+        shell: bash
+        run: |
+          if [ "${{ github.event.inputs.vivid_version }}" = "latest" ] || [ -z "${{ github.event.inputs.vivid_version }}" ]; then
+            echo "version=latest" >> $GITHUB_OUTPUT
+          else
+            echo "version=${{ github.event.inputs.vivid_version }}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Download vivid release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p vivid-sdk
+          if [ "${{ steps.vivid_version.outputs.version }}" = "latest" ]; then
+            RELEASE_TAG=$(gh api repos/${{ env.VIVID_REPO }}/releases --jq '.[0].tag_name')
+            echo "Latest vivid release: $RELEASE_TAG"
+            DOWNLOAD_URL="https://github.com/${{ env.VIVID_REPO }}/releases/download/${RELEASE_TAG}/${{ matrix.vivid_archive }}"
+          else
+            DOWNLOAD_URL="https://github.com/${{ env.VIVID_REPO }}/releases/download/${{ steps.vivid_version.outputs.version }}/${{ matrix.vivid_archive }}"
+          fi
+          echo "Downloading vivid from: $DOWNLOAD_URL"
+          curl -fL -o vivid-sdk/vivid.${{ matrix.archive_ext }} "$DOWNLOAD_URL"
+
+      - name: Extract vivid SDK (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          cd vivid-sdk
+          tar -xzf vivid.${{ matrix.archive_ext }}
+          VIVID_DIR=$(ls -d vivid-* | head -1)
+          echo "VIVID_ROOT=$(pwd)/$VIVID_DIR" >> $GITHUB_ENV
+
+      - name: Extract vivid SDK (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          cd vivid-sdk
+          Expand-Archive -Path vivid.${{ matrix.archive_ext }} -DestinationPath .
+          $VIVID_DIR = Get-ChildItem -Directory -Name | Where-Object { $_ -match "^vivid-" } | Select-Object -First 1
+          echo "VIVID_ROOT=$(Get-Location)\$VIVID_DIR" >> $env:GITHUB_ENV
+
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libxrandr-dev \
+            libxinerama-dev \
+            libxcursor-dev \
+            libxi-dev \
+            libxext-dev \
+            libwayland-dev \
+            libxkbcommon-dev \
+            libgl1-mesa-dev
+
+      - name: Configure CMake (darwin-x64 cross-compile)
+        if: matrix.target == 'darwin-x64'
+        shell: bash
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_ARCHITECTURES=x86_64 -DVIVID_ROOT="$VIVID_ROOT"
+
+      - name: Configure CMake
+        if: matrix.target != 'darwin-x64'
+        shell: bash
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release -DVIVID_ROOT="$VIVID_ROOT"
+
+      - name: Build
+        run: cmake --build build --config Release --parallel
+
+      - name: Package (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          mkdir -p package/vivid-opencv-${{ matrix.target }}
+          mkdir -p package/vivid-opencv-${{ matrix.target }}/lib
+          mkdir -p package/vivid-opencv-${{ matrix.target }}/include
+
+          # Copy vivid-opencv library
+          cp build/libvivid-opencv.dylib package/vivid-opencv-${{ matrix.target }}/lib/ 2>/dev/null || \
+          cp build/libvivid-opencv.so package/vivid-opencv-${{ matrix.target }}/lib/ 2>/dev/null || true
+
+          # Copy headers
+          cp -r include/* package/vivid-opencv-${{ matrix.target }}/include/
+
+          # Copy module.json
+          cp module.json package/vivid-opencv-${{ matrix.target }}/
+
+          # Copy examples
+          cp -r examples package/vivid-opencv-${{ matrix.target }}/
+
+          # Create archive
+          cd package
+          tar -czvf vivid-opencv-${{ matrix.target }}.${{ matrix.archive_ext }} vivid-opencv-${{ matrix.target }}
+
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path package/vivid-opencv-${{ matrix.target }}/lib
+          New-Item -ItemType Directory -Force -Path package/vivid-opencv-${{ matrix.target }}/include
+
+          # Copy vivid-opencv DLL and lib
+          Copy-Item build/Release/vivid-opencv.dll package/vivid-opencv-${{ matrix.target }}/lib/ -ErrorAction SilentlyContinue
+          Copy-Item build/Release/vivid-opencv.lib package/vivid-opencv-${{ matrix.target }}/lib/ -ErrorAction SilentlyContinue
+
+          # Copy headers
+          Copy-Item -Recurse include/* package/vivid-opencv-${{ matrix.target }}/include/
+
+          # Copy module.json
+          Copy-Item module.json package/vivid-opencv-${{ matrix.target }}/
+
+          # Copy examples
+          Copy-Item -Recurse examples package/vivid-opencv-${{ matrix.target }}/
+
+          # Create archive
+          Compress-Archive -Path package/vivid-opencv-${{ matrix.target }} -DestinationPath package/vivid-opencv-${{ matrix.target }}.${{ matrix.archive_ext }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: vivid-opencv-${{ matrix.target }}
+          path: package/vivid-opencv-${{ matrix.target }}.${{ matrix.archive_ext }}
+
+  create-release:
+    name: Create Release
+    needs: build-release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Get version from tag
+        id: version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: List artifacts
+        run: find artifacts -type f
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          name: vivid-opencv v${{ steps.version.outputs.VERSION }}
+          draft: false
+          prerelease: ${{ contains(github.ref, '-') }}
+          generate_release_notes: true
+          files: |
+            artifacts/*.tar.gz
+            artifacts/*.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

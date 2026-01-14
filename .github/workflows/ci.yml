@@ -1,0 +1,102 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  VIVID_REPO: seethroughlab/vivid
+
+jobs:
+  build:
+    name: Build (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            target: darwin-arm64
+            vivid_archive: vivid-darwin-arm64.tar.gz
+          - os: ubuntu-latest
+            target: linux-x64
+            vivid_archive: vivid-linux-x64.tar.gz
+          - os: windows-latest
+            target: win32-x64
+            vivid_archive: vivid-win32-x64.zip
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download vivid release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p vivid-sdk
+          # Get latest release (including pre-releases) via GitHub API
+          RELEASE_TAG=$(gh api repos/${{ env.VIVID_REPO }}/releases --jq '.[0].tag_name')
+          echo "Latest vivid release: $RELEASE_TAG"
+          DOWNLOAD_URL="https://github.com/${{ env.VIVID_REPO }}/releases/download/${RELEASE_TAG}/${{ matrix.vivid_archive }}"
+          echo "Downloading vivid from: $DOWNLOAD_URL"
+          curl -fL -o vivid-sdk/archive "$DOWNLOAD_URL"
+
+      - name: Extract vivid SDK (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          cd vivid-sdk
+          tar -xzf archive
+          VIVID_DIR=$(ls -d vivid-* | head -1)
+          echo "VIVID_ROOT=$(pwd)/$VIVID_DIR" >> $GITHUB_ENV
+
+      - name: Extract vivid SDK (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          cd vivid-sdk
+          Expand-Archive -Path archive -DestinationPath .
+          $VIVID_DIR = Get-ChildItem -Directory -Name | Where-Object { $_ -match "^vivid-" } | Select-Object -First 1
+          echo "VIVID_ROOT=$(Get-Location)\$VIVID_DIR" >> $env:GITHUB_ENV
+
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libxrandr-dev \
+            libxinerama-dev \
+            libxcursor-dev \
+            libxi-dev \
+            libxext-dev \
+            libwayland-dev \
+            libxkbcommon-dev \
+            libgl1-mesa-dev
+
+      - name: Configure CMake
+        shell: bash
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release -DVIVID_ROOT="$VIVID_ROOT" -DBUILD_TESTS=ON
+
+      - name: Build
+        run: cmake --build build --config Release --parallel
+
+      - name: Verify library built
+        shell: bash
+        run: |
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            ls -la build/Release/
+            test -f build/Release/vivid-opencv.dll || exit 1
+          elif [ "${{ runner.os }}" = "macOS" ]; then
+            ls -la build/
+            test -f build/libvivid-opencv.dylib || exit 1
+          else
+            ls -la build/
+            test -f build/libvivid-opencv.so || exit 1
+          fi
+          echo "Library built successfully!"
+
+      # Tests would go here when added
+      # - name: Run tests
+      #   run: ctest --test-dir build --output-on-failure -C Release

@@ -1,0 +1,21 @@
+{
+  "name": "vivid-opencv",
+  "version": "0.1.0",
+  "description": "OpenCV computer vision integration - contours, optical flow, tracking",
+  "author": "Vivid",
+  "license": "MIT",
+  "repository": "https://github.com/seethroughlab/vivid-opencv",
+  "vivid": ">=3.0.0",
+  "dependencies": [],
+  "operators": [
+    "Contours",
+    "OpticalFlow",
+    "BlobTrack"
+  ],
+  "prebuilt": {
+    "darwin-arm64": "https://github.com/seethroughlab/vivid-opencv/releases/download/${version}/vivid-opencv-darwin-arm64.tar.gz",
+    "darwin-x64": "https://github.com/seethroughlab/vivid-opencv/releases/download/${version}/vivid-opencv-darwin-x64.tar.gz",
+    "linux-x64": "https://github.com/seethroughlab/vivid-opencv/releases/download/${version}/vivid-opencv-linux-x64.tar.gz",
+    "win32-x64": "https://github.com/seethroughlab/vivid-opencv/releases/download/${version}/vivid-opencv-win32-x64.zip"
+  }
+}
