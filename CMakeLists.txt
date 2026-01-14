@@ -91,7 +91,12 @@ elseif(DEFINED VIVID_ROOT)
         find_library(VIVID_CORE_LIB vivid-core PATHS "${VIVID_ROOT}/lib" REQUIRED)
         message(STATUS "[vivid-opencv] Found vivid-core import library: ${VIVID_CORE_LIB}")
         # Also need wgpu for WebGPU symbols used in texture_converter.cpp
-        find_library(WGPU_LIB wgpu_native PATHS "${VIVID_ROOT}/lib" REQUIRED)
+        # wgpu can come from WGPU_ROOT (separate download) or VIVID_ROOT/lib
+        if(DEFINED WGPU_ROOT)
+            find_library(WGPU_LIB wgpu_native PATHS "${WGPU_ROOT}/lib" REQUIRED)
+        else()
+            find_library(WGPU_LIB wgpu_native PATHS "${VIVID_ROOT}/lib" REQUIRED)
+        endif()
         message(STATUS "[vivid-opencv] Found wgpu library: ${WGPU_LIB}")
     endif()
 else()

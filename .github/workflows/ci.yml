@@ -79,12 +79,28 @@ jobs:
             libxkbcommon-dev \
             libgl1-mesa-dev
 
+      - name: Download wgpu-native (Windows)
+        if: runner.os == 'Windows'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: |
+          $WGPU_VERSION = "v24.0.0.2"
+          New-Item -ItemType Directory -Force -Path wgpu-native | Out-Null
+          $headers = @{ Authorization = "token $env:GH_TOKEN" }
+          Invoke-WebRequest -Uri "https://github.com/gfx-rs/wgpu-native/releases/download/$WGPU_VERSION/wgpu-windows-x86_64-msvc-release.zip" -Headers $headers -OutFile "wgpu-native/wgpu.zip"
+          Expand-Archive -Path "wgpu-native/wgpu.zip" -DestinationPath "wgpu-native"
+          echo "WGPU_ROOT=$(Get-Location)\wgpu-native" >> $env:GITHUB_ENV
+
       - name: Configure CMake
         shell: bash
         run: |
           CMAKE_ARGS="-DCMAKE_BUILD_TYPE=Release -DVIVID_ROOT=$VIVID_ROOT -DBUILD_TESTS=ON"
           if [ "${{ matrix.cross_compile }}" = "true" ]; then
             CMAKE_ARGS="$CMAKE_ARGS -DCMAKE_OSX_ARCHITECTURES=x86_64"
+          fi
+          if [ -n "$WGPU_ROOT" ]; then
+            CMAKE_ARGS="$CMAKE_ARGS -DWGPU_ROOT=$WGPU_ROOT"
           fi
           cmake -B build $CMAKE_ARGS
 
