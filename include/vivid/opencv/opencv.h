@@ -41,8 +41,6 @@
 #include <vivid/opencv/optical_flow.h>
 #include <vivid/opencv/blob_track.h>
 
-// Note: texture_converter.h is internal-only (requires OpenCV headers)
-
 namespace vivid::opencv {
 
 // Note: Face detection requires the objdetect module which is not in opencv-mobile.

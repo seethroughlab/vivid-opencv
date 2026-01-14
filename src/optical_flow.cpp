@@ -4,10 +4,8 @@
  */
 
 #include <vivid/opencv/optical_flow.h>
-#include <vivid/opencv/texture_converter.h>
 #include <vivid/context.h>
 #include <vivid/chain.h>
-#include <webgpu/webgpu.h>
 #include <opencv2/core.hpp>
 #include <opencv2/imgproc.hpp>
 #include <opencv2/video/tracking.hpp>
@@ -36,57 +34,10 @@ OpticalFlow::OpticalFlow() : m_impl(std::make_unique<Impl>()) {
 
 OpticalFlow::~OpticalFlow() = default;
 
-static WGPUStringView toStrView(const char* str) {
-    return {str, strlen(str)};
-}
-
-void OpticalFlow::releaseCustomOutput() {
-    if (m_cvOutputView) {
-        wgpuTextureViewRelease(m_cvOutputView);
-        m_cvOutputView = nullptr;
-    }
-    if (m_cvOutput) {
-        wgpuTextureRelease(m_cvOutput);
-        m_cvOutput = nullptr;
-    }
-}
-
-void OpticalFlow::createOutputWithCopyDst(Context& ctx, int width, int height) {
-    if (m_cvOutput && m_cvWidth == width && m_cvHeight == height) {
-        return;
-    }
-
-    releaseCustomOutput();
-    m_cvWidth = width;
-    m_cvHeight = height;
-
-    WGPUTextureDescriptor desc = {};
-    desc.label = toStrView("OpticalFlow Output");
-    desc.size.width = static_cast<uint32_t>(width);
-    desc.size.height = static_cast<uint32_t>(height);
-    desc.size.depthOrArrayLayers = 1;
-    desc.mipLevelCount = 1;
-    desc.sampleCount = 1;
-    desc.dimension = WGPUTextureDimension_2D;
-    desc.format = WGPUTextureFormat_RGBA8Unorm;  // Use 8-bit for fast upload
-    desc.usage = WGPUTextureUsage_TextureBinding | WGPUTextureUsage_RenderAttachment |
-                 WGPUTextureUsage_CopySrc | WGPUTextureUsage_CopyDst;
-
-    m_cvOutput = wgpuDeviceCreateTexture(ctx.device(), &desc);
-
-    WGPUTextureViewDescriptor viewDesc = {};
-    viewDesc.format = WGPUTextureFormat_RGBA8Unorm;
-    viewDesc.dimension = WGPUTextureViewDimension_2D;
-    viewDesc.baseMipLevel = 0;
-    viewDesc.mipLevelCount = 1;
-    viewDesc.baseArrayLayer = 0;
-    viewDesc.arrayLayerCount = 1;
-
-    m_cvOutputView = wgpuTextureCreateView(m_cvOutput, &viewDesc);
-}
-
 void OpticalFlow::cleanup() {
-    releaseCustomOutput();
+    m_outputPixels.clear();
+    m_outputWidth = 0;
+    m_outputHeight = 0;
     m_impl->prevGray.release();
     m_impl->flow.release();
     m_impl->hasPrevFrame = false;
@@ -94,11 +45,13 @@ void OpticalFlow::cleanup() {
 
 void OpticalFlow::init(Context& ctx) {
     matchInputResolution(0);
-    int width = outputWidth();
-    int height = outputHeight();
-    if (width <= 0) width = 1;
-    if (height <= 0) height = 1;
-    createOutputWithCopyDst(ctx, width, height);
+}
+
+Operator::CpuPixelView OpticalFlow::cpuPixelView() const {
+    if (m_outputPixels.empty() || m_outputWidth <= 0 || m_outputHeight <= 0) {
+        return {};
+    }
+    return {m_outputPixels.data(), m_outputWidth, m_outputHeight, 4, 0};
 }
 
 void OpticalFlow::process(Context& ctx) {
@@ -126,8 +79,6 @@ void OpticalFlow::process(Context& ctx) {
         didCook();
         return;
     }
-
-    createOutputWithCopyDst(ctx, width, height);
 
     // Create cv::Mat from CPU pixels (BGRA) - zero-copy wrapper
     cv::Mat input(height, width, CV_8UC4, const_cast<uint8_t*>(cpuView.data));
@@ -249,40 +200,11 @@ void OpticalFlow::process(Context& ctx) {
     gray.copyTo(m_impl->prevGray);
     m_impl->hasPrevFrame = true;
 
-    // Fast upload: convert BGRA to RGBA and write directly (no sRGB conversion)
-    cv::Mat rgba;
-    cv::cvtColor(output, rgba, cv::COLOR_BGRA2RGBA);
-
-    WGPUTexelCopyTextureInfo dstInfo = {};
-    dstInfo.texture = m_cvOutput;
-    dstInfo.mipLevel = 0;
-    dstInfo.origin = {0, 0, 0};
-    dstInfo.aspect = WGPUTextureAspect_All;
-
-    // RGBA8 = 4 bytes per pixel, align to 256 bytes
-    uint32_t bytesPerRow = ((width * 4) + 255) & ~255;
-
-    // Copy with proper row alignment if needed
-    std::vector<uint8_t> alignedData;
-    const uint8_t* uploadData = rgba.data;
-    size_t uploadSize = rgba.total() * rgba.elemSize();
-
-    if (static_cast<uint32_t>(rgba.step[0]) != bytesPerRow) {
-        alignedData.resize(bytesPerRow * height);
-        for (int y = 0; y < height; ++y) {
-            memcpy(alignedData.data() + y * bytesPerRow, rgba.ptr(y), width * 4);
-        }
-        uploadData = alignedData.data();
-        uploadSize = alignedData.size();
-    }
-
-    WGPUTexelCopyBufferLayout layout = {};
-    layout.offset = 0;
-    layout.bytesPerRow = bytesPerRow;
-    layout.rowsPerImage = static_cast<uint32_t>(height);
-
-    WGPUExtent3D writeSize = {static_cast<uint32_t>(width), static_cast<uint32_t>(height), 1};
-    wgpuQueueWriteTexture(ctx.queue(), &dstInfo, uploadData, uploadSize, &layout, &writeSize);
+    // Store output in CPU pixel buffer (BGRA format)
+    m_outputWidth = width;
+    m_outputHeight = height;
+    size_t dataSize = output.total() * output.elemSize();
+    m_outputPixels.assign(output.data, output.data + dataSize);
 
     didCook();
 }

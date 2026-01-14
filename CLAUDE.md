@@ -24,14 +24,12 @@ vivid-opencv/
 │   ├── contours.h            # Contour detection
 │   ├── optical_flow.h        # Motion detection
 │   ├── blob_track.h          # Blob tracking
-│   ├── texture_converter.h   # GPU<->CPU conversion (internal)
 │   └── export.h              # DLL export macros
 ├── src/                      # Implementation
 │   ├── opencv.cpp            # Module entry point
 │   ├── contours.cpp          # Contours operator + REGISTER_OPERATOR
 │   ├── optical_flow.cpp      # OpticalFlow operator + REGISTER_OPERATOR
-│   ├── blob_track.cpp        # BlobTrack operator + REGISTER_OPERATOR
-│   └── texture_converter.cpp # GPU texture conversion utilities
+│   └── blob_track.cpp        # BlobTrack operator + REGISTER_OPERATOR
 ├── examples/                 # Runnable demos
 │   ├── contours-webcam/
 │   ├── contours-video/

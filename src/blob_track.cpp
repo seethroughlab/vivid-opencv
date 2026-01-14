@@ -6,7 +6,6 @@
 #include <vivid/opencv/blob_track.h>
 #include <vivid/context.h>
 #include <vivid/chain.h>
-#include <webgpu/webgpu.h>
 #include <opencv2/core.hpp>
 #include <opencv2/imgproc.hpp>
 #include <opencv2/features2d.hpp>
@@ -43,68 +42,23 @@ BlobTrack::BlobTrack() : m_impl(std::make_unique<Impl>()) {
 
 BlobTrack::~BlobTrack() = default;
 
-static WGPUStringView toStrView(const char* str) {
-    return {str, strlen(str)};
-}
-
-void BlobTrack::releaseOutput() {
-    if (m_cvOutputView) {
-        wgpuTextureViewRelease(m_cvOutputView);
-        m_cvOutputView = nullptr;
-    }
-    if (m_cvOutput) {
-        wgpuTextureRelease(m_cvOutput);
-        m_cvOutput = nullptr;
-    }
-}
-
-void BlobTrack::createOutputTexture(Context& ctx, int width, int height) {
-    if (m_cvOutput && m_cvWidth == width && m_cvHeight == height) {
-        return;
-    }
-
-    releaseOutput();
-    m_cvWidth = width;
-    m_cvHeight = height;
-
-    WGPUTextureDescriptor desc = {};
-    desc.label = toStrView("BlobTrack Output");
-    desc.size.width = static_cast<uint32_t>(width);
-    desc.size.height = static_cast<uint32_t>(height);
-    desc.size.depthOrArrayLayers = 1;
-    desc.mipLevelCount = 1;
-    desc.sampleCount = 1;
-    desc.dimension = WGPUTextureDimension_2D;
-    desc.format = WGPUTextureFormat_RGBA8Unorm;
-    desc.usage = WGPUTextureUsage_TextureBinding | WGPUTextureUsage_RenderAttachment |
-                 WGPUTextureUsage_CopySrc | WGPUTextureUsage_CopyDst;
-
-    m_cvOutput = wgpuDeviceCreateTexture(ctx.device(), &desc);
-
-    WGPUTextureViewDescriptor viewDesc = {};
-    viewDesc.format = WGPUTextureFormat_RGBA8Unorm;
-    viewDesc.dimension = WGPUTextureViewDimension_2D;
-    viewDesc.baseMipLevel = 0;
-    viewDesc.mipLevelCount = 1;
-    viewDesc.baseArrayLayer = 0;
-    viewDesc.arrayLayerCount = 1;
-
-    m_cvOutputView = wgpuTextureCreateView(m_cvOutput, &viewDesc);
-}
-
 void BlobTrack::cleanup() {
-    releaseOutput();
+    m_outputPixels.clear();
+    m_outputWidth = 0;
+    m_outputHeight = 0;
     m_impl->detector.release();
     m_impl->keypoints.clear();
 }
 
 void BlobTrack::init(Context& ctx) {
     matchInputResolution(0);
-    int width = outputWidth();
-    int height = outputHeight();
-    if (width <= 0) width = 1;
-    if (height <= 0) height = 1;
-    createOutputTexture(ctx, width, height);
+}
+
+Operator::CpuPixelView BlobTrack::cpuPixelView() const {
+    if (m_outputPixels.empty() || m_outputWidth <= 0 || m_outputHeight <= 0) {
+        return {};
+    }
+    return {m_outputPixels.data(), m_outputWidth, m_outputHeight, 4, 0};
 }
 
 void BlobTrack::process(Context& ctx) {
@@ -131,8 +85,6 @@ void BlobTrack::process(Context& ctx) {
         didCook();
         return;
     }
-
-    createOutputTexture(ctx, width, height);
 
     // Check if detector params changed - recreate detector if needed
     bool paramsChanged =
@@ -254,39 +206,11 @@ void BlobTrack::process(Context& ctx) {
                  cv::Scalar(255, 0, 255, 255), 2, cv::LINE_AA);
     }
 
-    // Convert BGRA to RGBA for GPU upload
-    cv::Mat rgba;
-    cv::cvtColor(output, rgba, cv::COLOR_BGRA2RGBA);
-
-    // Upload to GPU
-    WGPUTexelCopyTextureInfo dstInfo = {};
-    dstInfo.texture = m_cvOutput;
-    dstInfo.mipLevel = 0;
-    dstInfo.origin = {0, 0, 0};
-    dstInfo.aspect = WGPUTextureAspect_All;
-
-    uint32_t bytesPerRow = ((width * 4) + 255) & ~255;
-
-    std::vector<uint8_t> alignedData;
-    const uint8_t* uploadData = rgba.data;
-    size_t uploadSize = rgba.total() * rgba.elemSize();
-
-    if (static_cast<uint32_t>(rgba.step[0]) != bytesPerRow) {
-        alignedData.resize(bytesPerRow * height);
-        for (int y = 0; y < height; ++y) {
-            memcpy(alignedData.data() + y * bytesPerRow, rgba.ptr(y), width * 4);
-        }
-        uploadData = alignedData.data();
-        uploadSize = alignedData.size();
-    }
-
-    WGPUTexelCopyBufferLayout layout = {};
-    layout.offset = 0;
-    layout.bytesPerRow = bytesPerRow;
-    layout.rowsPerImage = static_cast<uint32_t>(height);
-
-    WGPUExtent3D writeSize = {static_cast<uint32_t>(width), static_cast<uint32_t>(height), 1};
-    wgpuQueueWriteTexture(ctx.queue(), &dstInfo, uploadData, uploadSize, &layout, &writeSize);
+    // Store output in CPU pixel buffer (BGRA format)
+    m_outputWidth = width;
+    m_outputHeight = height;
+    size_t dataSize = output.total() * output.elemSize();
+    m_outputPixels.assign(output.data, output.data + dataSize);
 
     didCook();
 }

@@ -50,7 +50,7 @@ elseif(DEFINED VIVID_ROOT)
         # Find dependency headers in build/_deps
         set(VIVID_DEP_INCLUDE_DIRS "")
 
-        # WebGPU
+        # WebGPU headers (needed by operator.h, but we don't link against wgpu)
         if(EXISTS "${VIVID_ROOT}/build/_deps/wgpu/include/webgpu/webgpu.h")
             list(APPEND VIVID_DEP_INCLUDE_DIRS "${VIVID_ROOT}/build/_deps/wgpu/include")
         else()
@@ -78,6 +78,13 @@ elseif(DEFINED VIVID_ROOT)
         else()
             message(FATAL_ERROR "[vivid-opencv] nlohmann_json headers not found. Please build vivid first.")
         endif()
+
+        # magic_enum
+        if(EXISTS "${VIVID_ROOT}/build/_deps/magic_enum-src/include/magic_enum/magic_enum.hpp")
+            list(APPEND VIVID_DEP_INCLUDE_DIRS "${VIVID_ROOT}/build/_deps/magic_enum-src/include")
+        else()
+            message(FATAL_ERROR "[vivid-opencv] magic_enum headers not found. Please build vivid first.")
+        endif()
     else()
         message(FATAL_ERROR "[vivid-opencv] VIVID_ROOT specified but headers not found.\n"
             "  Checked: ${VIVID_ROOT}/include/vivid/vivid.h\n"
@@ -90,14 +97,6 @@ elseif(DEFINED VIVID_ROOT)
     if(WIN32)
         find_library(VIVID_CORE_LIB vivid-core PATHS "${VIVID_ROOT}/lib" REQUIRED)
         message(STATUS "[vivid-opencv] Found vivid-core import library: ${VIVID_CORE_LIB}")
-        # Also need wgpu for WebGPU symbols used in texture_converter.cpp
-        # wgpu can come from WGPU_ROOT (separate download) or VIVID_ROOT/lib
-        if(DEFINED WGPU_ROOT)
-            find_library(WGPU_LIB wgpu_native PATHS "${WGPU_ROOT}/lib" REQUIRED)
-        else()
-            find_library(WGPU_LIB wgpu_native PATHS "${VIVID_ROOT}/lib" REQUIRED)
-        endif()
-        message(STATUS "[vivid-opencv] Found wgpu library: ${WGPU_LIB}")
     endif()
 else()
     # Try find_package
@@ -251,7 +250,6 @@ endif()
 # -----------------------------------------------------------------------------
 set(OPENCV_SOURCES
     src/opencv.cpp
-    src/texture_converter.cpp
     src/contours.cpp
     src/optical_flow.cpp
     src/blob_track.cpp
@@ -291,7 +289,7 @@ elseif(VIVID_BUILD_MODE STREQUAL "standalone")
     target_link_libraries(vivid-opencv PRIVATE opencv_core opencv_imgproc opencv_video opencv_features2d)
 
     if(WIN32)
-        target_link_libraries(vivid-opencv PUBLIC ${VIVID_CORE_LIB} ${WGPU_LIB})
+        target_link_libraries(vivid-opencv PUBLIC ${VIVID_CORE_LIB})
     else()
         # macOS/Linux: symbols resolved at load time by vivid runtime
         if(APPLE)

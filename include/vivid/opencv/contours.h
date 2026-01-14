@@ -13,6 +13,7 @@
 #include <vivid/param.h>
 #include <vivid/operator_registry.h>
 #include <memory>
+#include <vector>
 
 namespace vivid::opencv {
 
@@ -35,7 +36,7 @@ enum class ContourMode : int {
  * shapes in the input texture. Contours are drawn on a transparent background.
  *
  * @note This operator requires CPU pixel data from the input operator via
- * cpuPixels(). Compatible sources include Webcam and VideoPlayer.
+ * cpuPixelView(). Compatible sources include Webcam and VideoPlayer.
  * Operators that only provide GPU textures will be skipped.
  *
  * @par Parameters
@@ -68,7 +69,7 @@ enum class ContourMode : int {
  * - Input 0: Source texture (any format)
  *
  * @par Output
- * Texture with contours drawn on transparent background
+ * CPU pixel buffer with contours drawn on transparent background
  */
 class VIVID_OPENCV_API Contours : public vivid::effects::TextureOperator {
 public:
@@ -100,9 +101,9 @@ public:
     void cleanup() override;
     std::string name() const override { return "Contours"; }
 
-    // Override output accessors to return custom texture with COPY_DST
-    WGPUTexture outputTexture() const override { return m_cvOutput; }
-    WGPUTextureView outputView() const override { return m_cvOutputView; }
+    // CPU pixel output (no GPU texture)
+    OutputKind outputKind() const override { return OutputKind::CpuPixels; }
+    CpuPixelView cpuPixelView() const override;
 
     /// @}
 
@@ -119,17 +120,13 @@ public:
     /// @}
 
 private:
-    void createOutputWithCopyDst(Context& ctx, int width, int height);
-    void releaseCustomOutput();
-
     struct Impl;  // Forward declaration - hides OpenCV types
     std::unique_ptr<Impl> m_impl;
 
-    // Custom output texture with COPY_DST flag (for matToTexture uploads)
-    WGPUTexture m_cvOutput = nullptr;
-    WGPUTextureView m_cvOutputView = nullptr;
-    int m_cvWidth = 0;
-    int m_cvHeight = 0;
+    // CPU pixel output buffer
+    std::vector<uint8_t> m_outputPixels;
+    int m_outputWidth = 0;
+    int m_outputHeight = 0;
 };
 
 } // namespace vivid::opencv

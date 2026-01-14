@@ -12,6 +12,7 @@
 #include <vivid/param.h>
 #include <vivid/operator_registry.h>
 #include <memory>
+#include <vector>
 
 namespace vivid::opencv {
 
@@ -30,7 +31,7 @@ enum class FlowVizMode : int {
  * Calculates motion vectors between consecutive frames using Farneback's algorithm.
  * Outputs a visualization of the flow field.
  *
- * @note Requires CPU pixel data from input via cpuPixels().
+ * @note Requires CPU pixel data from input via cpuPixelView().
  * Compatible sources: Webcam, VideoPlayer.
  *
  * @par Parameters
@@ -83,23 +84,20 @@ public:
     void cleanup() override;
     std::string name() const override { return "OpticalFlow"; }
 
-    // Override output accessors for custom texture
-    WGPUTexture outputTexture() const override { return m_cvOutput; }
-    WGPUTextureView outputView() const override { return m_cvOutputView; }
+    // CPU pixel output (no GPU texture)
+    OutputKind outputKind() const override { return OutputKind::CpuPixels; }
+    CpuPixelView cpuPixelView() const override;
 
     /// @}
 
 private:
-    void createOutputWithCopyDst(Context& ctx, int width, int height);
-    void releaseCustomOutput();
-
     struct Impl;
     std::unique_ptr<Impl> m_impl;
 
-    WGPUTexture m_cvOutput = nullptr;
-    WGPUTextureView m_cvOutputView = nullptr;
-    int m_cvWidth = 0;
-    int m_cvHeight = 0;
+    // CPU pixel output buffer
+    std::vector<uint8_t> m_outputPixels;
+    int m_outputWidth = 0;
+    int m_outputHeight = 0;
 };
 
 } // namespace vivid::opencv

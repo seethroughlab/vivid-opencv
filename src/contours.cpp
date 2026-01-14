@@ -6,8 +6,6 @@
 #include <vivid/opencv/contours.h>
 #include <vivid/context.h>
 #include <vivid/chain.h>
-#include <vivid/opencv/texture_converter.h>  // For matToTexture (output upload only)
-#include <webgpu/webgpu.h>
 #include <opencv2/core.hpp>
 #include <opencv2/imgproc.hpp>
 
@@ -32,76 +30,22 @@ Contours::Contours() : m_impl(std::make_unique<Impl>()) {
 
 Contours::~Contours() = default;
 
-// Helper to convert std::string to WGPUStringView
-static WGPUStringView toStrView(const char* str) {
-    return {str, strlen(str)};
-}
-
-void Contours::releaseCustomOutput() {
-    if (m_cvOutputView) {
-        wgpuTextureViewRelease(m_cvOutputView);
-        m_cvOutputView = nullptr;
-    }
-    if (m_cvOutput) {
-        wgpuTextureRelease(m_cvOutput);
-        m_cvOutput = nullptr;
-    }
-}
-
-void Contours::createOutputWithCopyDst(Context& ctx, int width, int height) {
-    // Skip if same dimensions
-    if (m_cvOutput && m_cvWidth == width && m_cvHeight == height) {
-        return;
-    }
-
-    // Release existing
-    releaseCustomOutput();
-
-    m_cvWidth = width;
-    m_cvHeight = height;
-
-    // Custom output creation with COPY_DST flag for matToTexture uploads
-    WGPUTextureDescriptor desc = {};
-    desc.label = toStrView("Contours Output");
-    desc.size.width = static_cast<uint32_t>(width);
-    desc.size.height = static_cast<uint32_t>(height);
-    desc.size.depthOrArrayLayers = 1;
-    desc.mipLevelCount = 1;
-    desc.sampleCount = 1;
-    desc.dimension = WGPUTextureDimension_2D;
-    desc.format = WGPUTextureFormat_RGBA16Float;
-    // Include COPY_DST for wgpuQueueWriteTexture
-    desc.usage = WGPUTextureUsage_TextureBinding | WGPUTextureUsage_RenderAttachment |
-                 WGPUTextureUsage_CopySrc | WGPUTextureUsage_CopyDst;
-
-    m_cvOutput = wgpuDeviceCreateTexture(ctx.device(), &desc);
-
-    WGPUTextureViewDescriptor viewDesc = {};
-    viewDesc.format = WGPUTextureFormat_RGBA16Float;
-    viewDesc.dimension = WGPUTextureViewDimension_2D;
-    viewDesc.baseMipLevel = 0;
-    viewDesc.mipLevelCount = 1;
-    viewDesc.baseArrayLayer = 0;
-    viewDesc.arrayLayerCount = 1;
-
-    m_cvOutputView = wgpuTextureCreateView(m_cvOutput, &viewDesc);
-}
-
 void Contours::cleanup() {
-    releaseCustomOutput();
+    m_outputPixels.clear();
+    m_outputWidth = 0;
+    m_outputHeight = 0;
 }
 
 void Contours::init(Context& ctx) {
-    // Try to match input resolution, or use default
+    // Try to match input resolution
     matchInputResolution(0);
-    int width = outputWidth();
-    int height = outputHeight();
+}
 
-    // Ensure we have at least a 1x1 texture (will be resized in process)
-    if (width <= 0) width = 1;
-    if (height <= 0) height = 1;
-
-    createOutputWithCopyDst(ctx, width, height);
+Operator::CpuPixelView Contours::cpuPixelView() const {
+    if (m_outputPixels.empty() || m_outputWidth <= 0 || m_outputHeight <= 0) {
+        return {};
+    }
+    return {m_outputPixels.data(), m_outputWidth, m_outputHeight, 4, 0};
 }
 
 void Contours::process(Context& ctx) {
@@ -117,7 +61,7 @@ void Contours::process(Context& ctx) {
         return;
     }
 
-    // Use zero-copy view for CPU pixels (no 8MB copy)
+    // Use zero-copy view for CPU pixels
     auto cpuView = inputOp->cpuPixelView();
     if (!cpuView.valid()) {
         // Input doesn't provide CPU pixels - skip processing
@@ -134,9 +78,6 @@ void Contours::process(Context& ctx) {
         didCook();
         return;
     }
-
-    // Create/resize output with COPY_DST flag
-    createOutputWithCopyDst(ctx, width, height);
 
     // Create cv::Mat from CPU pixel data (BGRA format from VideoPlayer/Webcam) - zero-copy
     cv::Mat input(height, width, CV_8UC4, const_cast<uint8_t*>(cpuView.data));
@@ -179,8 +120,11 @@ void Contours::process(Context& ctx) {
 
     cv::drawContours(output, m_impl->contours, -1, color, thickness);
 
-    // Upload result to GPU
-    matToTexture(ctx, output, m_cvOutput);
+    // Store output in CPU pixel buffer
+    m_outputWidth = width;
+    m_outputHeight = height;
+    size_t dataSize = output.total() * output.elemSize();
+    m_outputPixels.assign(output.data, output.data + dataSize);
 
     didCook();
 }
