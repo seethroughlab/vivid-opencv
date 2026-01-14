@@ -90,6 +90,9 @@ elseif(DEFINED VIVID_ROOT)
     if(WIN32)
         find_library(VIVID_CORE_LIB vivid-core PATHS "${VIVID_ROOT}/lib" REQUIRED)
         message(STATUS "[vivid-opencv] Found vivid-core import library: ${VIVID_CORE_LIB}")
+        # Also need wgpu for WebGPU symbols used in texture_converter.cpp
+        find_library(WGPU_LIB wgpu_native PATHS "${VIVID_ROOT}/lib" REQUIRED)
+        message(STATUS "[vivid-opencv] Found wgpu library: ${WGPU_LIB}")
     endif()
 else()
     # Try find_package
@@ -283,7 +286,7 @@ elseif(VIVID_BUILD_MODE STREQUAL "standalone")
     target_link_libraries(vivid-opencv PRIVATE opencv_core opencv_imgproc opencv_video opencv_features2d)
 
     if(WIN32)
-        target_link_libraries(vivid-opencv PUBLIC ${VIVID_CORE_LIB})
+        target_link_libraries(vivid-opencv PUBLIC ${VIVID_CORE_LIB} ${WGPU_LIB})
     else()
         # macOS/Linux: symbols resolved at load time by vivid runtime
         if(APPLE)
