@@ -223,6 +223,17 @@ if(VIVID_SDK_BUILD)
     FetchContent_MakeAvailable(nlohmann_json)
     set(NLOHMANN_JSON_INCLUDE_DIR "${nlohmann_json_SOURCE_DIR}/include")
     message(STATUS "[vivid-opencv] Fetched nlohmann/json: ${NLOHMANN_JSON_INCLUDE_DIR}")
+
+    # magic_enum (required by vivid param.h)
+    FetchContent_Declare(
+        magic_enum
+        GIT_REPOSITORY https://github.com/Neargye/magic_enum.git
+        GIT_TAG v0.9.6
+        GIT_SHALLOW TRUE
+    )
+    FetchContent_MakeAvailable(magic_enum)
+    set(MAGIC_ENUM_INCLUDE_DIR "${magic_enum_SOURCE_DIR}/include")
+    message(STATUS "[vivid-opencv] Fetched magic_enum: ${MAGIC_ENUM_INCLUDE_DIR}")
 endif()
 
 # -----------------------------------------------------------------------------
@@ -259,8 +270,13 @@ if(VIVID_BUILD_MODE STREQUAL "in-tree")
     )
 elseif(VIVID_BUILD_MODE STREQUAL "standalone")
     target_include_directories(vivid-opencv PRIVATE ${VIVID_INCLUDE_DIR} ${VIVID_DEP_INCLUDE_DIRS})
-    if(VIVID_SDK_BUILD AND NLOHMANN_JSON_INCLUDE_DIR)
-        target_include_directories(vivid-opencv PRIVATE ${NLOHMANN_JSON_INCLUDE_DIR})
+    if(VIVID_SDK_BUILD)
+        if(NLOHMANN_JSON_INCLUDE_DIR)
+            target_include_directories(vivid-opencv PRIVATE ${NLOHMANN_JSON_INCLUDE_DIR})
+        endif()
+        if(MAGIC_ENUM_INCLUDE_DIR)
+            target_include_directories(vivid-opencv PRIVATE ${MAGIC_ENUM_INCLUDE_DIR})
+        endif()
     endif()
     target_link_libraries(vivid-opencv PRIVATE opencv_core opencv_imgproc opencv_video opencv_features2d)
 
