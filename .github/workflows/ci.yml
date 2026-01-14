@@ -20,6 +20,10 @@ jobs:
           - os: macos-14
             target: darwin-arm64
             vivid_archive: vivid-darwin-arm64.tar.gz
+          - os: macos-14
+            target: darwin-x64
+            vivid_archive: vivid-darwin-x64.tar.gz
+            cross_compile: true
           - os: ubuntu-latest
             target: linux-x64
             vivid_archive: vivid-linux-x64.tar.gz
@@ -77,7 +81,12 @@ jobs:
 
       - name: Configure CMake
         shell: bash
-        run: cmake -B build -DCMAKE_BUILD_TYPE=Release -DVIVID_ROOT="$VIVID_ROOT" -DBUILD_TESTS=ON
+        run: |
+          CMAKE_ARGS="-DCMAKE_BUILD_TYPE=Release -DVIVID_ROOT=$VIVID_ROOT -DBUILD_TESTS=ON"
+          if [ "${{ matrix.cross_compile }}" = "true" ]; then
+            CMAKE_ARGS="$CMAKE_ARGS -DCMAKE_OSX_ARCHITECTURES=x86_64"
+          fi
+          cmake -B build $CMAKE_ARGS
 
       - name: Build
         run: cmake --build build --config Release --parallel
